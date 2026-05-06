@@ -1,0 +1,260 @@
+---
+description: Orchestrator dispatch rule — formats and sends parallel agent tasks via N8N
+globs:
+alwaysApply: true
+---
+
+# Dispatch Rule — Orchestrator → N8N Parallel Agents
+
+This rule activates whenever the user types `/dispatch` in the Cursor chat.
+
+---
+
+## Infrastructure Reference
+
+| Agent    | IP          | Model           | Default Role |
+|----------|-------------|-----------------|--------------|
+| agent-01 | YOUR_IP_01  | composer-2-fast | Frontend     |
+| agent-02 | YOUR_IP_02  | composer-2-fast | Backend      |
+| agent-03 | YOUR_IP_03  | composer-2      | Tests/DevOps |
+| agent-N  | YOUR_IP_N   | composer-2-fast | General      |
+
+**N8N webhook:** `http://YOUR_N8N_IP:5678/webhook/dispatch-task`
+
+---
+
+## Step 1 — Task Breakdown
+
+Before doing anything else, the orchestrator MUST:
+
+1. Read project planning docs (architecture, backlog, todo)
+2. Break the requested feature/fix into subtasks — one per agent needed
+3. Assign subtasks using the default ownership table above
+4. List every file each agent will touch before proceeding to Step 2
+
+---
+
+## Step 2 — Overlap Check (MANDATORY — Hard Block)
+
+Before generating any payload, verify **zero file overlap** across all assigned agents.
+
+### If overlap is detected:
+
+```
+⛔ DISPATCH BLOCKED — FILE OVERLAP DETECTED
+
+Conflict:
+  agent-02 → server/schemas.py
+  agent-03 → server/schemas.py
+
+Resolution required before dispatch:
+  Option A: Assign server/schemas.py to agent-02 only.
+  Option B: Run agent-02 first, then agent-03 sequentially.
+
+Awaiting your decision before dispatch proceeds.
+```
+
+**The orchestrator MUST NOT generate the payload or run any terminal command
+until the overlap is resolved.**
+
+### Known hotspot files (always flag these):
+- Shared schemas and models
+- `package.json` / `package-lock.json`
+- Shared config files used by multiple agents
+- Any migration environment files
+
+---
+
+## Step 3 — Generate the Dispatch Payload
+
+### 3a — Human-readable dispatch summary
+
+Display this FIRST:
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║                    DISPATCH SUMMARY                          ║
+╠══════════════════════════════════════════════════════════════╣
+║ agent-01 (Frontend — composer-2-fast)                        ║
+║   Task : <task or n/a>                                       ║
+║   Files: <files or n/a>                                      ║
+╠══════════════════════════════════════════════════════════════╣
+║ agent-02 (Backend — composer-2-fast)                         ║
+║   Task : <task or n/a>                                       ║
+║   Files: <files or n/a>                                      ║
+╠══════════════════════════════════════════════════════════════╣
+║ agent-N  (General — composer-2-fast)                         ║
+║   Task : <task or n/a>                                       ║
+║   Files: <files or n/a>                                      ║
+╠══════════════════════════════════════════════════════════════╣
+║ Overlap Check : ✅ PASSED                                    ║
+║ Active Agents : <N> of <TOTAL>                               ║
+║ Discord       : agents post to their channels live           ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+### 3b — PowerShell payload
+
+Always include ALL key pairs. Agents with no work get `"n/a"` for both task and files.
+
+```powershell
+$body = @{
+    task_01  = "<self-contained task for agent-01, or 'n/a'>"
+    files_01 = "<repo-relative paths, or 'n/a'>"
+    task_02  = "<self-contained task for agent-02, or 'n/a'>"
+    files_02 = "<repo-relative paths, or 'n/a'>"
+    task_N   = "<self-contained task for agent-N, or 'n/a'>"
+    files_N  = "<repo-relative paths, or 'n/a'>"
+} | ConvertTo-Json -Compress
+
+Invoke-RestMethod `
+    -Uri "http://YOUR_N8N_IP:5678/webhook/dispatch-task" `
+    -Method POST `
+    -ContentType "application/json" `
+    -Body $body `
+    -TimeoutSec 600
+```
+
+**Critical payload rules:**
+- Always include ALL key pairs — never omit any
+- Unused agents get `"n/a"` for both task and files — never omit keys
+- Use `ConvertTo-Json -Compress` directly — do NOT pipe through `ConvertFrom-Json`
+- Do NOT wrap the hashtable in quotes
+
+---
+
+## Step 4 — Auto-Run via Terminal
+
+Immediately after displaying the summary and payload, run the PowerShell
+command in the Cursor terminal **without waiting for additional confirmation**.
+
+**What happens after dispatch fires:**
+- Each active agent posts `🔄 starting task` to its Discord channel
+- Cursor CLI runs the task headlessly (`agent --print --yolo --trust`)
+- Each active agent posts `✅ task complete` with summary to its Discord channel
+- N8N posts `📋 Dispatch Complete` summary to `#project-orchestration`
+- Any blocked agent posts `⛔ BLOCKED @here` to `#project-blocked`
+
+---
+
+## Step 5 — Update Planning Docs
+
+After successful dispatch, mark dispatched tasks as IN PROGRESS in your
+project planning and tracking documents and push to dev:
+
+```bash
+git add docs/YOUR_PLANNING_DOC.md
+git commit -m "chore: mark tasks in progress — /dispatch <feature name>"
+git push origin dev
+```
+
+---
+
+## Task Description Quality Standard
+
+Each task MUST be self-contained and include:
+
+1. **Who** — "You are agent-01 working on branch agent-agent-01 of PROJECT_NAME"
+2. **What** — specific feature or fix (not vague)
+3. **Where** — exact repo-relative file paths
+4. **How** — patterns to follow (e.g. "follow existing patterns in server/routers/")
+5. **Done when** — clear definition of done
+6. **Dependencies** — if dependent on another agent finishing first, say so explicitly
+
+**Bad:**
+```
+"Add login stuff"
+```
+
+**Good:**
+```
+"You are agent-01 working on branch agent-agent-01 of PROJECT_NAME.
+Add a LoginForm component at web/src/components/LoginForm.jsx with email
+and password fields, validation (no empty fields), and a submit button.
+Follow the pattern used in web/src/components/RegisterForm.jsx. Export as
+default. Done when the component renders without errors and accepts onSubmit
+as a prop. Commit with message 'feat: add LoginForm component'."
+```
+
+---
+
+## Slice Discipline — Strictly Enforced
+
+Every task string MUST end with this block verbatim:
+
+```
+SLICE DISCIPLINE — STRICTLY ENFORCED:
+- Work ONLY on these files: <files_N value>
+- Do NOT modify any file outside this list under any circumstances
+- Do NOT make drive-by fixes, formatting changes, or improvements to unrelated files
+- Do NOT merge, cherry-pick, or carry over any unrelated local work
+- If a change seems needed outside your assigned files, note it in your report — do NOT make it
+- Commit ONLY the changes to your assigned files
+- Commit message format: '<type>: <description>'
+```
+
+### sc-karl review checklist before merging to dev
+
+Before merging any agent branch, always run:
+
+```bash
+git diff --name-only dev...agent-BRANCH-NAME
+```
+
+If any file appears that was **not** in `files_N` for that agent — cherry-pick
+only the assigned-file commits. **Never merge the branch wholesale.**
+
+---
+
+## Sequenced Dispatch (Dependent Tasks)
+
+If tasks are dependent, dispatch in rounds:
+
+1. Dispatch Round 1 (independent agents only)
+2. Wait for `✅ task complete` Discord posts from Round 1 agents
+3. Dispatch Round 2 for dependent agents
+
+Always report the sequencing plan before dispatching:
+
+```
+⚠️ SEQUENCED DISPATCH REQUIRED
+
+Round 1 → agent-01, agent-02 (parallel)
+Round 2 → agent-03 (after agent-02 posts ✅ in Discord)
+
+Proceeding with Round 1 now.
+```
+
+---
+
+## Rules Orchestrator MUST Follow
+
+| Rule | Detail |
+|------|--------|
+| Never dispatch with overlap | Hard block — resolve first |
+| Always show summary before running | User sees what will be sent |
+| Auto-run terminal after summary | No second confirmation needed |
+| Always include all key pairs | Unused agents get `"n/a"` |
+| Always append slice discipline block | Verbatim, end of every real task string |
+| Always review diff before merging | `git diff --name-only dev...agent-BRANCH` |
+| Never merge agent branch wholesale | Cherry-pick only assigned-file commits |
+| Task descriptions must be self-contained | Write cold — agents have no prior context |
+| File paths relative to repo root | e.g. `web/src/components/Foo.jsx` |
+| Never touch dev or main from agents | Agents work on their own branches only |
+| Use `ConvertTo-Json -Compress` directly | No `ConvertFrom-Json` pipe |
+
+---
+
+## Discord Channel Reference
+
+| Channel | Purpose |
+|---------|---------|
+| `#project-orchestration` | N8N final summary after all agents complete |
+| `#project-agent-01` | agent-01 live updates |
+| `#project-agent-N` | agent-N live updates |
+| `#project-deploy-monitor` | Deployment log alerts |
+| `#project-blocked` | Any agent error — `@here` ping |
+
+---
+
+*See `agent-network.mdc` for full topology and communication protocols.*

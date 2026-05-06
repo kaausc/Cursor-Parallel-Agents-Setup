@@ -1,0 +1,220 @@
+---
+description: Git rules for all agents — commit, push, identity discipline
+globs:
+alwaysApply: true
+---
+
+# Git Rules — All Agents (Strictly Enforced)
+
+These rules apply to every agent on every machine. No exceptions.
+
+---
+
+## Branch Assignments
+
+| Agent        | Branch           |
+|--------------|------------------|
+| orchestrator | dev (review/merge only) |
+| agent-01     | agent-agent-01   |
+| agent-02     | agent-agent-02   |
+| agent-N      | agent-agent-N    |
+
+---
+
+## Rule 1 — Always Start Clean from origin/dev
+
+Before any file is read, edited, or created:
+
+```bash
+git fetch origin
+git checkout <your-branch>
+git reset --hard origin/dev
+```
+
+This guarantees no stale local commits carry into the new task.
+
+---
+
+## Rule 2 — Commit Only Your Assigned Files
+
+Never use `git add .` for real tasks. Always stage explicitly:
+
+```bash
+git add path/to/assigned/file1 path/to/assigned/file2
+git commit -m "<type>: <short description>"
+```
+
+Commit types: feat / fix / refactor / test / config / docs / chore
+
+Never use vague messages: fix, update, changes, WIP, misc.
+
+---
+
+## Rule 3 — Push Regularly
+
+Push at minimum every 30 minutes even if a task is not complete:
+
+```bash
+git push origin <your-branch>
+```
+
+---
+
+## Rule 4 — Never Push to main or dev Directly
+
+Only the orchestrator merges into dev. Only the user approves merges into main.
+
+```bash
+# NEVER run these as a coder agent:
+git push origin main
+git push origin dev
+```
+
+---
+
+## Rule 5 — Start of Task Checklist
+
+```bash
+# 1. Go to project root
+cd /path/to/repo
+
+# 2. Fetch latest from origin
+git fetch origin
+
+# 3. Switch to your assigned branch
+git checkout <your-branch>
+
+# 4. Reset hard to origin/dev — start clean every time
+git reset --hard origin/dev
+
+# 5. Confirm status is clean before starting
+git status
+```
+
+Only proceed when `git status` shows a clean working tree.
+
+---
+
+## Rule 6 — End of Task Checklist
+
+```bash
+# 1. Stage ONLY your assigned files (never git add .)
+git add path/to/your/assigned/file1 path/to/your/assigned/file2
+
+# 2. Review exactly what you are committing
+git status
+git diff --staged
+
+# 3. Commit with a descriptive message
+git commit -m "feat: describe what was completed"
+
+# 4. Push to your branch
+git push origin <your-branch>
+
+# 5. Report completion to orchestrator
+```
+
+---
+
+## Rule 7 — Conflict Resolution
+
+If you see CONFLICT during any git operation — STOP immediately.
+Do not touch the file. Report to the orchestrator immediately:
+
+```
+CONFLICT DETECTED
+Agent: <your-agent-name>
+Branch: <your-branch>
+File: <filename>
+Awaiting instruction from orchestrator.
+```
+
+---
+
+## Rule 8 — Do Not Commit These Files
+
+Make sure `.gitignore` covers these before committing:
+
+```
+node_modules/
+.env
+.env.*
+.agent-identity
+*.log
+dist/
+build/
+.DS_Store
+Thumbs.db
+*.sqlite
+*.key
+*.pem
+.venv/
+__pycache__/
+```
+
+---
+
+## Rule 9 — .agent-identity Is Local
+
+`.agent-identity` is gitignored and machine-local. Never commit it, never
+force-add it, never copy secret values (Discord webhook URLs, etc.) into
+tracked files.
+
+---
+
+## Rule 10 — Force-Push Policy
+
+Force-push is permitted on agent branches only under these conditions:
+
+| Situation | Command | Who |
+|-----------|---------|-----|
+| Pre-task reset to origin/dev (automatic) | `git push --force-with-lease origin <branch>` | run-agent-task.sh |
+| Orchestrator-requested branch cleanup | `git push --force-with-lease origin <branch>` | orchestrator only |
+| Any other reason | NOT permitted — report to orchestrator first | — |
+
+Always use `--force-with-lease` — never `--force`.
+Never force-push to dev or main.
+
+---
+
+## Rule 11 — Git Identity
+
+Every agent must have its git identity set to its agent name and project email:
+
+```bash
+git config --global user.name "agent-01"
+git config --global user.email "agent-01@your-domain.com"
+```
+
+Verify identity before starting any task:
+
+```bash
+git config user.name
+git config user.email
+```
+
+Remove local repo overrides if present:
+
+```bash
+git config --local --unset user.name 2>/dev/null || true
+git config --local --unset user.email 2>/dev/null || true
+```
+
+---
+
+## Quick Reference Card
+
+| Situation | Command |
+|-----------|---------|
+| Start of task | `git fetch origin && git checkout <branch> && git reset --hard origin/dev` |
+| Stage assigned files only | `git add path/to/file1 path/to/file2` |
+| Review staged changes | `git diff --staged` |
+| Commit | `git commit -m "type: description"` |
+| Push | `git push origin <branch>` |
+| Force-push after reset | `git push --force-with-lease origin <branch>` |
+| Conflict detected | **STOP — report to orchestrator** |
+| Verify git identity | `git config user.name && git config user.email` |
+
+---
+
+*These rules are non-negotiable. Every agent follows them on every task, every time.*

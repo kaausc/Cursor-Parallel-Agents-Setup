@@ -1,0 +1,160 @@
+---
+description: Orchestration protocol — delegation, review, merge, and escalation rules
+globs:
+alwaysApply: true
+---
+
+# Orchestration Protocol
+
+---
+
+## Role of the Orchestrator
+
+The orchestrator is the **ONLY** entry point for tasks from the user.
+It delegates, reviews, and merges — it does not write production code for
+complex tasks.
+
+---
+
+## Delegation Protocol
+
+Follow these steps in order for every dispatch:
+
+```
+Step 1 — Read planning docs (architecture, todo, backlog)
+Step 2 — Overlap check (hard block if any two agents share a file)
+Step 3 — Generate dispatch summary + payload (/dispatch)
+Step 4 — Auto-run PowerShell dispatch
+Step 5 — Monitor Discord for 🔄 start and ✅ complete posts
+Step 6 — Review: git diff --name-only dev...agent-BRANCH for each agent
+Step 7 — Cherry-pick clean slice commits to dev
+Step 8 — Update planning docs, push to dev
+```
+
+---
+
+## Review Protocol
+
+Before merging any agent work to dev:
+
+**1. Check scope**
+```bash
+git diff --name-only dev...agent-BRANCH-NAME
+```
+Must match `files_N` exactly. If extras appear — cherry-pick only the assigned-file commits.
+
+**2. Check attribution**
+```bash
+git log --oneline dev..agent-BRANCH-NAME
+```
+Each commit must have a clear Author (`agent-name@domain`). If blank, the agent's git identity is misconfigured — fix before accepting the commit.
+
+**3. Run tests**
+Run the project test suite before pushing to dev.
+
+**4. Integrate**
+```bash
+# Preferred — clean single-file slices
+git cherry-pick SHA
+
+# Only if branch is provably clean (every commit = only files_N)
+git merge agent-BRANCH
+```
+
+**5. Push to dev**
+```bash
+git push origin dev
+```
+
+---
+
+## Merge Policy
+
+| Branch type | Who merges | How |
+|-------------|------------|-----|
+| `agent-*` → `dev` | Orchestrator only | Cherry-pick slice commits |
+| `dev` → `main` | User only | PR / manual approval |
+
+**Never merge agent branches wholesale** unless every commit in the branch
+was verified to contain only the declared `files_N` paths.
+
+---
+
+## Parallel Work Rules
+
+- Orchestrator may run all agents simultaneously for independent tasks
+- Before parallel dispatch, verify **no file overlap** between any two agents
+- Shared hotspot files must be serialized — one agent at a time
+- If two agents need the same file, orchestrator sequences the work
+
+---
+
+## Sequenced Dispatch
+
+When task B depends on task A completing first:
+
+1. Dispatch Round 1 (independent agents only)
+2. Wait for `✅` Discord posts from Round 1 agents
+3. Dispatch Round 2 for dependent agents
+
+Always announce the plan before Round 1:
+
+```
+⚠️ SEQUENCED DISPATCH
+Round 1 → agent-01, agent-02 (parallel)
+Round 2 → agent-03 (after agent-02 posts ✅)
+
+Proceeding with Round 1 now.
+```
+
+---
+
+## Escalation Rules
+
+| Situation | Action |
+|-----------|--------|
+| Merge conflict on agent branch | Agent stops, orchestrator resolves |
+| Agent blocked > 10 minutes | Agent reports, orchestrator unblocks immediately |
+| Task scope grows unexpectedly | Agent reports before continuing |
+| Two agents need the same file | Orchestrator serializes |
+| Test failures after merge to dev | Orchestrator identifies responsible agent |
+| `⚠️` Discord out-of-scope warning | Cherry-pick only — do not merge branch |
+
+---
+
+## Discord Channel Protocol
+
+| Channel | Purpose |
+|---------|---------|
+| `#project-orchestration` | Dispatch summaries, merge announcements, force-push notices |
+| `#project-agent-N` | Live start/complete updates per agent |
+| `#project-blocked` | `@here` alerts — requires **immediate** response |
+| `#project-deploy-monitor` | Server/deployment log alerts |
+
+**Watch all channels after every dispatch.**
+The blocked channel requires immediate response — do not let agents sit blocked.
+
+When force-pushing to clean an agent branch, always post in `#project-orchestration`:
+```
+🔄 Force-push on agent-BRANCH — branch reset to origin/dev for clean dispatch
+```
+
+---
+
+## Post-Dispatch Checklist
+
+After all agents post `✅` in Discord:
+
+```markdown
+- [ ] Reviewed git diff for each active agent
+- [ ] Cherry-picked or merged only clean slice commits
+- [ ] Tests passing on dev
+- [ ] Planning docs updated (tasks marked complete)
+- [ ] dev pushed to origin
+- [ ] Agents notified of completion
+```
+
+---
+
+*This protocol exists to ensure every piece of agent work is traceable,
+reviewable, and safe to merge. When in doubt — cherry-pick, never merge wholesale.*

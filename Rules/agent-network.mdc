@@ -1,0 +1,195 @@
+---
+description: Agent network topology, roles, and communication rules
+globs:
+alwaysApply: true
+---
+
+# Agent Network
+
+This document defines the identity, role, responsibilities, and communication
+rules for every agent in the development network.
+
+---
+
+## Network Topology
+
+```
+User
+ └── orchestrator (main Cursor machine — YOUR_ORCH_IP)
+      ├── agent-01 (Ubuntu 24.04 — YOUR_IP_01)
+      ├── agent-02 (Ubuntu 24.04 — YOUR_IP_02)
+      ├── agent-03 (Ubuntu 24.04 — YOUR_IP_03)
+      └── agent-N  (Ubuntu 24.04 — YOUR_IP_N)
+
+N8N Orchestrator: YOUR_N8N_IP:5678
+```
+
+All instructions flow **DOWN** from the user through the orchestrator.
+All reports flow **UP** back to the orchestrator and then to the user.
+No agent communicates directly with another agent without orchestrator coordination.
+
+---
+
+## Agent Roster
+
+| Agent        | IP           | Branch          | Model           | Default Role      |
+|--------------|--------------|-----------------|-----------------|-------------------|
+| orchestrator | YOUR_ORCH_IP | dev             | —               | Delegate & review |
+| agent-01     | YOUR_IP_01   | agent-agent-01  | composer-2-fast | Frontend (web/)   |
+| agent-02     | YOUR_IP_02   | agent-agent-02  | composer-2-fast | Backend (server/) |
+| agent-03     | YOUR_IP_03   | agent-agent-03  | composer-2      | Tests / DevOps    |
+| agent-N      | YOUR_IP_N    | agent-agent-N   | composer-2-fast | General purpose   |
+
+---
+
+## Orchestrator Responsibilities
+
+- Receives **all tasks** directly from the user
+- **Breaks down** large tasks into subtasks before any work begins
+- **Delegates** via `/dispatch` → N8N → Cursor CLI on each agent
+- **Never writes code** unless the task is trivial or the user explicitly asks
+- **Reviews** all completed work before merging to `dev`
+- **Only agent** allowed to merge branches into `dev`
+- **Monitors** Discord channels for live updates and blocker alerts
+- Maintains project planning and tracking documents
+- Coordinates conflict resolution between agents
+
+---
+
+## Coder Agent Responsibilities
+
+- Receives tasks **only from the orchestrator**
+- Works exclusively on their **assigned branch**
+- **Resets to origin/dev** before every task (no stale history)
+- **Commits only assigned files** — no drive-by edits
+- Pushes every **30 minutes minimum**
+- Reports **TASK COMPLETE** or **BLOCKED** to orchestrator
+- **Never merges or pushes** to `dev` or `main`
+
+---
+
+## Default Task Assignments
+
+| Work Type | Default Agent |
+|-----------|---------------|
+| UI components, pages, CSS, frontend logic | agent-01 |
+| API routes, auth, middleware, models | agent-02 |
+| Tests, migrations, CI config | agent-03 |
+| Overflow / parallel / large features | agent-N |
+| Log monitoring, health checks | monitor agent |
+| Code review, merging, conflict resolution | orchestrator |
+
+These are defaults — orchestrator may reassign based on workload.
+
+---
+
+## Communication Formats
+
+### Delegation (orchestrator → agent)
+
+```
+DELEGATE TO: <agent-name>
+BRANCH: <branch-name>
+TASK: <clear description of what needs to be done>
+FILES: <relevant repo-relative file paths>
+DEPENDS ON: <other agent's work this depends on, or "none">
+COMPLETE WHEN: <clear definition of done>
+REPORT BACK TO: orchestrator
+```
+
+### Completion Report (agent → orchestrator)
+
+```
+TASK COMPLETE
+Agent: <agent-name>
+Branch: <branch-name>
+Completed: <what was done>
+Files Modified: <list of files changed>
+Commits: <commit messages made>
+Pushed: Yes / No
+Issues Encountered: <any problems or blockers>
+Ready for review by: orchestrator
+```
+
+### Blocker Report (agent → orchestrator)
+
+```
+BLOCKED
+Agent: <agent-name>
+Task: <what was being worked on>
+Blocker: <what is preventing progress>
+Needs help from: <which agent or resource can unblock>
+Awaiting instruction from: orchestrator
+```
+
+---
+
+## Parallel Work Rules
+
+- Orchestrator may run **all agents simultaneously** for independent tasks
+- Before dispatching parallel tasks, verify **no file overlap** between agents
+- If two agents need the same file, they must work **sequentially**
+- Orchestrator is responsible for checking overlap before dispatching
+
+### Shared Hotspot Files (always serialize)
+
+- Shared schemas and models
+- `package.json` / lockfiles
+- Shared config files
+- Any file used by multiple agents
+
+---
+
+## Escalation Rules
+
+| Situation | Action |
+|-----------|--------|
+| Merge conflict detected | Agent stops, reports to orchestrator immediately |
+| Agent blocked > 10 minutes | Agent reports blocker to orchestrator |
+| Task scope grows unexpectedly | Agent reports before continuing |
+| Uncertainty about file ownership | Agent asks orchestrator before touching the file |
+| Two agents need the same file | Orchestrator serializes — one at a time |
+
+---
+
+## Session Startup Checklist
+
+Every agent runs this at the start of each session:
+
+```bash
+# 1. Read your identity
+cat /path/to/repo/.agent-identity
+
+# 2. Reset to origin/dev
+git fetch origin
+git checkout <your-branch>
+git reset --hard origin/dev
+
+# 3. Confirm clean status
+git status
+
+# 4. Read project planning docs
+# (architecture, todo, implementation plan)
+
+# 5. Report ready to orchestrator
+echo "<agent-name> ready and awaiting tasks"
+```
+
+---
+
+## Session Shutdown Checklist
+
+```bash
+# 1. Stage and commit only assigned files
+git add path/to/assigned/files
+git commit -m "chore: end of session commit — <brief summary>"
+
+# 2. Push to your branch
+git push origin <your-branch>
+
+# 3. Report session summary to orchestrator
+```
+
+---
+
+*This network exists to build software efficiently, safely, and with full traceability.*
