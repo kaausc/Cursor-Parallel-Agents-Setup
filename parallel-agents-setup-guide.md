@@ -1365,7 +1365,43 @@ git diff --name-only origin/dev HEAD
 # Must match files_N — if empty, slice was already on dev
 ```
 
-**Cause:** The webhook body is nested under a `body` key in N8N but the Parse Body code accesses it at the wrong level.
+### 11.17 Agent Pushes Files Outside Declared Scope (Scope Violation)
+
+**Symptom:** Orchestrator's `git diff --name-only` shows files beyond `files_N` on the agent branch tip.
+
+**Cause:** Agent made changes outside the declared slice — either the AI model edited unrelated files or stale history carried them forward.
+
+**Immediate fix:**
+```bash
+# Reset the violating agent branch to dev
+ssh -i ~/.ssh/n8n_agents AGENT_USER@AGENT_IP "
+  cd ~/REPO_NAME
+  git fetch origin
+  git reset --hard origin/dev
+  git push --force-with-lease origin AGENT_BRANCH
+"
+```
+
+**Permanent fix:** The latest `run-agent-task.sh` runs a pre-push scope check:
+```bash
+git diff --name-only origin/dev HEAD
+```
+If any file outside `files_N` appears, the script posts `⛔ SCOPE VIOLATION` to `#project-blocked` and exits without pushing. The branch is left clean for a corrected redispatch.
+
+### 11.18 Symbols (§) or Non-ASCII Characters in Commit Subjects
+
+**Symptom:** Commits contain `§`, `→`, or other non-ASCII symbols in the subject line, which can break some git tooling and CI log parsers.
+
+**Cause:** Cursor CLI model used documentation symbols in commit messages.
+
+**Prevention:** The slice discipline block appended to every task prompt now includes commit subject style rules. Agents are instructed to use only ASCII in commit subjects.
+
+**Fix existing commits** (if already pushed):
+```bash
+# Amend the last commit subject on the agent branch
+git commit --amend -m "docs: corrected commit subject without symbols"
+git push --force-with-lease origin AGENT_BRANCH
+```
 
 **Fix:** Ensure Parse Body code uses:
 
@@ -1538,7 +1574,9 @@ On success:
 | May 2026 | Added Slice Discipline section to Part 6 |
 | May 2026 | Added troubleshooting 9.13 (scope creep), 9.14 (force-push policy), 9.15 (git attribution) |
 | May 2026 | Added Part 7 — Sample Cursor Rules Files (git-rules, agent-network, dispatch-agents, orchestration) |
-| May 2026 | Added pre-push empty commit check to run-agent-task.sh (skips push if no new content vs dev) |
+| May 2026 | Added pre-push scope violation check to run-agent-task.sh (blocks push if undeclared files in diff) |
+| May 2026 | Added troubleshooting 11.17 (scope violation) and 11.18 (non-ASCII commit subjects) |
+| May 2026 | Added commit subject style rules to git-rules.mdc Rule 6 and dispatch-agents.mdc slice block |
 | May 2026 | Added squash-before-push guidance and Rule 12 (one clean commit per slice) |
 | May 2026 | Added troubleshooting 11.16 (empty push — slice already on dev) |
 
