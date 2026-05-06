@@ -404,7 +404,16 @@ fi
 
 git add .
 git diff --staged --quiet || git commit -m "chore: end of session commit by \$AGENT_ID"
-git push origin \$BRANCH
+
+# Only push if there is new content vs origin/dev
+NEW_COMMITS=\$(git log origin/dev..HEAD --oneline 2>/dev/null | wc -l)
+if [ "\$NEW_COMMITS" -eq 0 ]; then
+  echo "=== ℹ️  No new commits vs origin/dev — skipping push ===" | tee -a \$LOGFILE
+  discord_post "\$DISCORD_AGENT_WEBHOOK" \
+    "ℹ️ **\$AGENT_ID** — no new content vs dev, nothing pushed (slice already on dev)"
+else
+  git push --force-with-lease origin \$BRANCH
+fi
 
 SUMMARY=\$(echo "\$AGENT_OUTPUT" | tail -20 | tr '\n' ' ' | sed 's/[\"\\\\\ \`]//g' | cut -c1-800)
 

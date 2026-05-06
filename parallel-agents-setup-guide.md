@@ -1252,24 +1252,118 @@ ssh -i ~/.ssh/n8n_agents AGENT_USER@AGENT_IP "~/.local/bin/agent status"
 
 **Symptom:** Orchestrator reports empty cherry-picks or "content already on dev"
 
-**Cause:** Agent made broad edits on top of stale branch state before merging dev.
+**Cause:** Agent branch was not reset to `origin/dev` before the slice, or work was stacked across rounds without squashing. The pre-flight reset in `run-agent-task.sh` handles this automatically for N8N dispatches — this issue only appears in manual sessions or when the script isn't running.
 
-**Fix:** Reset the agent branch cleanly:
+**Immediate fix** — reset the agent branch cleanly:
 
 ```bash
 ssh -i ~/.ssh/n8n_agents AGENT_USER@AGENT_IP "
   cd ~/REPO_NAME
   BRANCH=\$(grep AGENT_BRANCH .agent-identity | cut -d'=' -f2)
   git fetch origin
-  git reset --hard origin/\$BRANCH
-  git merge -X theirs origin/dev --no-edit
-  git push origin \$BRANCH
+  git reset --hard origin/dev
+  git push --force-with-lease origin \$BRANCH
 "
 ```
 
-**Prevention:** The `run-agent-task.sh` script runs `git merge -X theirs origin/dev` before every task. This ensures agents always start from a clean, up-to-date state.
+**Prevention — one clean commit per slice:**
+
+Before pushing any slice, agents should verify and squash:
+
+```bash
+# Check what you have vs dev
+git log origin/dev..HEAD --oneline
+# If commits already on dev appear → squash them:
+git rebase -i origin/dev
+# Mark already-merged commits as 'drop'
+
+# Verify final diff matches only assigned files
+git diff --name-only origin/dev HEAD
+
+# Only push if there is new content
+git log origin/dev..HEAD --oneline | wc -l
+# If 0 → nothing to push, skip
+```
+
+The `run-agent-task.sh` script automatically skips the push if there are no new commits vs dev, and posts an informational Discord message instead.
 
 ### 11.12 N8N Parse Body Returns All Agents as "n/a"
+
+**Cause:** The webhook body is nested under a `body` key in N8N but the Parse Body code accesses it at the wrong level.
+
+**Fix:** Ensure Parse Body code uses:
+
+```javascript
+const input = $input.first().json;
+const body = input.body || input;  // handles the nesting
+```
+
+Without `input.body || input`, all `body.task_01` lookups return `undefined`.
+
+### 11.13 Agents Touching Files Outside Their Assigned Scope
+
+**Symptom:** Orchestrator reports drive-by fixes, empty cherry-picks, or files outside `files_N` appearing in the agent branch diff.
+
+**Cause:** Agent made changes outside declared scope.
+
+**Immediate fix** — cherry-pick only the slice commits onto dev:
+
+```bash
+git log --oneline dev..agent-BRANCH-NAME -- path/to/assigned/file
+git checkout dev
+git cherry-pick SHA1 SHA2
+git push origin dev
+```
+
+**Permanent fix** — three layers enforced in the latest `run-agent-task.sh`:
+
+1. **Pre-flight reset** — `git reset --hard origin/dev` before every task eliminates stale history
+2. **Slice discipline prompt** — appended automatically to every real task prompt
+3. **Hard scope enforcement** — out-of-scope files are restored to `origin/dev` state before committing; only declared `files_N` can land on the branch
+
+### 11.14 Force-Push Warnings on Agent Branches
+
+**Symptom:** `git fetch` reports forced updates on agent branches.
+
+**Cause:** The pre-flight `git reset --hard origin/dev` followed by `git push --force-with-lease` is expected and intentional — it resets the agent branch to a clean state before every task.
+
+**Policy:** Always use `--force-with-lease` never `--force`. Never force-push to `dev` or `main`. See `git-rules.mdc` Rule 10 for the full force-push policy.
+
+### 11.15 Commits Missing Author Attribution
+
+**Symptom:** Cherry-picked commits show no Author line or blank git identity.
+
+**Cause:** `git config user.name` or `user.email` not set on that agent VM, or a local repo config is overriding the global setting.
+
+**Fix:**
+```bash
+for host in AGENT_IP_1 AGENT_IP_2 AGENT_IP_N; do
+  ssh -i ~/.ssh/n8n_agents AGENT_USER@$host "
+    AGENT=\$(grep AGENT_NAME ~/REPO_NAME/.agent-identity | cut -d'=' -f2)
+    git config --global user.name \"\$AGENT\"
+    git config --global user.email \"\$AGENT@your-domain.com\"
+    git config --local --unset user.name 2>/dev/null || true
+    git config --local --unset user.email 2>/dev/null || true
+    echo Fixed: \$(git config user.name) / \$(git config user.email)
+  "
+done
+```
+
+### 11.16 Empty Push — Slice Already on dev
+
+**Symptom:** Agent pushes but orchestrator reports the cherry-pick is empty — content already on dev.
+
+**Cause:** The agent's slice commit duplicated content already integrated in a previous round.
+
+**Prevention:** The `run-agent-task.sh` script checks `git log origin/dev..HEAD --oneline` before pushing. If there are zero new commits vs dev, it skips the push and posts an informational Discord message instead of pushing a no-op commit.
+
+**Manual check before any push:**
+```bash
+git log origin/dev..HEAD --oneline
+# 0 lines = nothing new = do not push
+git diff --name-only origin/dev HEAD
+# Must match files_N — if empty, slice was already on dev
+```
 
 **Cause:** The webhook body is nested under a `body` key in N8N but the Parse Body code accesses it at the wrong level.
 
@@ -1444,6 +1538,9 @@ On success:
 | May 2026 | Added Slice Discipline section to Part 6 |
 | May 2026 | Added troubleshooting 9.13 (scope creep), 9.14 (force-push policy), 9.15 (git attribution) |
 | May 2026 | Added Part 7 — Sample Cursor Rules Files (git-rules, agent-network, dispatch-agents, orchestration) |
+| May 2026 | Added pre-push empty commit check to run-agent-task.sh (skips push if no new content vs dev) |
+| May 2026 | Added squash-before-push guidance and Rule 12 (one clean commit per slice) |
+| May 2026 | Added troubleshooting 11.16 (empty push — slice already on dev) |
 
 ---
 
