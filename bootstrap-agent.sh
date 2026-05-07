@@ -244,6 +244,7 @@ cd $REPO_DIR
 grep -q '.agent-identity' .gitignore || echo '.agent-identity' >> .gitignore
 grep -q '.venv/' .gitignore        || echo '.venv/' >> .gitignore
 grep -q '^.venv$' .gitignore       || echo '.venv' >> .gitignore
+grep -q '__pycache__' .gitignore   || echo '__pycache__/' >> .gitignore
 
 git add .gitignore
 git diff --staged --quiet || \
@@ -403,6 +404,9 @@ if [ \$EXIT_CODE -ne 0 ]; then
 fi
 
 git add .
+git rm --cached -r .venv 2>/dev/null || true
+git rm --cached -r __pycache__ 2>/dev/null || true
+git rm --cached -r node_modules 2>/dev/null || true
 git diff --staged --quiet || git commit -m "chore: end of session commit by \$AGENT_ID"
 
 # Only push if there is new content vs origin/dev

@@ -1615,6 +1615,8 @@ Arguments: TASK, FILES, BRANCH
     ↓
 Read .agent-identity (agent name, model, discord webhook)
     ↓
+Sanitize TASK — strip # characters (prevents ### from breaking SSH args)
+    ↓
 Post 🔄 "starting" to Discord (if real task)
     ↓
 Pre-flight reset:
@@ -1629,16 +1631,26 @@ Task routing:
                      + slice discipline block appended to prompt
     ↓
 Post-task file scope check:
-  Restore any out-of-scope files to origin/dev state (hard reset)
+  git diff --name-only origin/dev HEAD
+  Any file outside FILES → restore to origin/dev state (hard reset)
   git add only declared FILES
-  Any auto-reset files → post ⚠️ warning to agent Discord channel
+  Strip .venv/ __pycache__ node_modules from staging before commit
+    ↓
+Pre-push checks:
+  git diff --name-only origin/dev HEAD — must match FILES exactly
+  git log origin/dev..HEAD --oneline — skip push if 0 new commits
+    ↓
+Push with retry (up to 3 attempts, SHA verification each time):
+  git push --force-with-lease origin BRANCH
+  git fetch origin BRANCH
+  Compare local HEAD SHA vs remote SHA → retry if mismatch
+  ⛔ PUSH FAILED Discord alert if all 3 attempts fail
     ↓
 On error (exit code ≠ 0):
   Post ⛔ BLOCKED to #project-blocked with @here
   Exit 1 (N8N marks as failed)
     ↓
 On success:
-  git add . && git commit (if changes) && git push
   Post ✅ "complete" with summary to agent Discord channel
   Print TASK COMPLETE + DISCORD_SUMMARY (parsed by N8N Collect Results)
 ```
@@ -1651,6 +1663,20 @@ On success:
 | `docs/*` | `merge=ours` | Prevents doc conflicts when agents work on shared docs |
 | Application code | Normal merge | Agents own their assigned files |
 | Conflicts on any file | `-X theirs` (dev wins) | Dev is always source of truth |
+
+### Reviewing Agent Branches Before Merging
+
+Always use **three dots** when diffing agent branches — this shows only what is unique to the branch since it diverged from dev:
+
+```bash
+# CORRECT — shows only the agent's unique changes
+git diff --name-only origin/dev...origin/agent-BRANCH
+
+# WRONG — shows full cumulative diff including shared history (misleading)
+git diff --name-only origin/dev..origin/agent-BRANCH
+```
+
+The three-dot diff should show exactly one file matching `files_N`. If it shows more, cherry-pick only the assigned-file commit.
 
 ### Cursor CLI Key Flags
 
@@ -1706,6 +1732,21 @@ Layer 3: N8N Retry On Fail — retries entire SSH session up to 2x
 Layer 4: Workflow timeout — 30 minutes before N8N gives up
 ```
 
+### 11.24 Scope Check Shows Hundreds of Files — Branch Looks Polluted
+
+**Symptom:** Running `git diff --name-only dev..origin/agent-BRANCH` shows 50+ files across the whole codebase even though the agent only touched one file.
+
+**Cause:** Two-dot diff (`dev..branch`) compares all commits reachable from the branch but not from dev — this includes the entire shared history that accumulated before the pre-flight reset was implemented. It is **not** a scope violation — it's the wrong diff command.
+
+**Fix — always use three dots:**
+
+```bash
+# Shows only what is unique to the branch since it diverged from dev
+git diff --name-only origin/dev...origin/agent-BRANCH
+```
+
+This should show exactly one file matching `files_N`. The three-dot syntax finds the common ancestor and diffs from there, ignoring shared history.
+
 ---
 
 ## Changelog
@@ -1737,6 +1778,12 @@ Layer 4: Workflow timeout — 30 minutes before N8N gives up
 | May 2026 | Added commit subject style rules to git-rules.mdc Rule 6 and dispatch-agents.mdc slice block |
 | May 2026 | Added squash-before-push guidance and Rule 12 (one clean commit per slice) |
 | May 2026 | Added troubleshooting 11.16 (empty push — slice already on dev) |
+| May 2026 | Added .venv/ and __pycache__/ stripping to end-of-session git add block in run-agent-task.sh |
+| May 2026 | Added .venv/ and __pycache__/ to repo root .gitignore on dev |
+| May 2026 | Added push retry with SHA verification (3 attempts, Discord alert on failure) |
+| May 2026 | Added TASK argument sanitization — strips # to prevent markdown headings breaking SSH args |
+| May 2026 | Clarified three-dot vs two-dot diff for reviewing agent branches (11.24) |
+| May 2026 | Updated orchestration.mdc review protocol to use origin/dev...origin/BRANCH (three dots) |
 
 ---
 
