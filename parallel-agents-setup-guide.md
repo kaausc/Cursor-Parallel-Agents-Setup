@@ -1782,7 +1782,7 @@ This should show exactly one file matching `files_N`. The three-dot syntax finds
 | May 2026 | Added .venv/ and __pycache__/ to repo root .gitignore on dev |
 | May 2026 | Added push retry with SHA verification (3 attempts, Discord alert on failure) |
 | May 2026 | Added TASK argument sanitization — strips # to prevent markdown headings breaking SSH args |
-| May 2026 | Clarified three-dot vs two-dot diff for reviewing agent branches (11.24) |
+| May 2026 | First zero-intervention dispatch — all 8 agents clean, one file each, no .venv, no git add . noise, merges completed with no conflicts |
 | May 2026 | Updated orchestration.mdc review protocol to use origin/dev...origin/BRANCH (three dots) |
 
 ---
