@@ -412,7 +412,35 @@ if [ "\$NEW_COMMITS" -eq 0 ]; then
   discord_post "\$DISCORD_AGENT_WEBHOOK" \
     "ℹ️ **\$AGENT_ID** — no new content vs dev, nothing pushed (slice already on dev)"
 else
-  git push --force-with-lease origin \$BRANCH
+  PUSH_ATTEMPTS=0
+  PUSH_SUCCESS=0
+  while [ \$PUSH_ATTEMPTS -lt 3 ]; do
+    PUSH_ATTEMPTS=\$((\$PUSH_ATTEMPTS + 1))
+    git push --force-with-lease origin \$BRANCH 2>&1 | tee -a \$LOGFILE
+    git fetch origin \$BRANCH 2>/dev/null
+    LOCAL_SHA=\$(git rev-parse HEAD)
+    REMOTE_SHA=\$(git rev-parse origin/\$BRANCH 2>/dev/null || echo "unknown")
+    if [ "\$LOCAL_SHA" = "\$REMOTE_SHA" ]; then
+      echo "=== Push verified: local matches remote ===" | tee -a \$LOGFILE
+      PUSH_SUCCESS=1
+      break
+    else
+      echo "=== Push attempt \$PUSH_ATTEMPTS failed verification — retrying in 5s ===" | tee -a \$LOGFILE
+      sleep 5
+    fi
+  done
+  if [ \$PUSH_SUCCESS -eq 0 ]; then
+    discord_post "\$DISCORD_BLOCKED_WEBHOOK" \
+      "⛔ **PUSH FAILED — \$AGENT_ID**\`\`\`Branch \$BRANCH did not reach GitHub after 3 attempts.
+Local: \$LOCAL_SHA
+Remote: \$REMOTE_SHA\`\`\`
+@here"
+    echo "BLOCKED"
+    echo "Agent: \$AGENT_ID"
+    echo "Branch: \$BRANCH"
+    echo "Error: Push verification failed after 3 attempts"
+    exit 1
+  fi
 fi
 
 SUMMARY=\$(echo "\$AGENT_OUTPUT" | tail -20 | tr '\n' ' ' | sed 's/[\"\\\\\ \`]//g' | cut -c1-800)

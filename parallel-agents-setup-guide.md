@@ -1486,7 +1486,129 @@ done
 
 > The bootstrap script now sets `user.name` to `AGENT_NAME` (e.g. `agent-01`) so every commit is clearly attributable to the agent that made it.
 
-### How run-agent-task.sh Works
+### 11.19 Pattern Drift — Agents Respect Scope but Diverge from Agreed Implementation Pattern
+
+**Symptom:** All agents stayed in their assigned files (scope clean) but produced implementations that differ from each other or from the agreed pattern — e.g. different method signatures, different error handling conventions, inconsistent stub shapes across sibling files.
+
+**Cause:** The task description specified *what file* to create but not *exactly how* to implement it, leaving the model to infer the pattern. Without an explicit example or sibling file reference, different agents make different choices.
+
+**This is not a slice violation** — the agent followed the file scope rules correctly. It is a task quality issue.
+
+**Fix — normalize with a follow-up dispatch:**
+
+Send a tight corrective dispatch targeting only the inconsistent agents, with an explicit pattern reference in the task:
+
+```
+"You are agent-07 working on branch agent-agent-07. The file
+worker/workers/patch_tracker.py currently has a register(app) FastAPI hook
+instead of the standard stub pattern used by sibling files.
+
+Look at worker/workers/vuln_scanner.py as the reference pattern. It uses:
+  - SERVICE_NAME constant
+  - run() method that raises NotImplementedError
+  - A docstring describing the planned functionality
+
+Update worker/workers/patch_tracker.py to match this exact pattern.
+Remove register(app). Add run() + NotImplementedError. Keep the docstring.
+
+SLICE DISCIPLINE: only touch worker/workers/patch_tracker.py."
+```
+
+**Prevention — always include a sibling reference in task descriptions:**
+
+When dispatching tasks that create files following a pattern, always include:
+- An explicit reference file: "Follow the pattern in `path/to/sibling.py`"
+- The exact method signatures or class structure expected
+- What NOT to do: "Do not add FastAPI hooks, decorators, or imports not present in the reference"
+
+---
+
+### 11.22 Task Payload Truncated — Markdown Headings Break SSH Argument Parsing
+
+**Symptom:** Agent log shows `Branch: D`, `Files: Wave`, or other single words instead of the actual branch name and file paths. The task ran but with completely wrong arguments — nothing was committed.
+
+**Cause:** The task string contained markdown heading syntax (`###`) which the shell interpreted as a comment delimiter when passed through SSH, silently truncating everything after it.
+
+Example of broken log:
+```
+=== Branch: D ===
+=== Task: You are sc-ca-08... Fix contradictory heading ### ===
+=== Files: Wave ===
+```
+The dispatch payload contained `### Wave D` in the task text — the shell split the string at `###`.
+
+**Fix — sanitize the task argument on arrival:**
+
+The latest `run-agent-task.sh` strips `#` characters from incoming task arguments so markdown headings never break parsing.
+
+**Prevention — never use markdown heading syntax inside task strings:**
+
+```
+# Wrong — ### breaks SSH argument parsing
+task_08 = "Fix the ### Wave D heading in docs/TODO.md"
+
+# Correct — reference by name, not heading syntax
+task_08 = "Fix the 'Wave D' heading in docs/DISTRIBUTED_SITES_TODO.md"
+```
+
+Reference doc sections by name in plain prose:
+- ✅ "see the Wave D section of DISTRIBUTED_SITES_TODO.md"
+- ✅ "update the Phase 6 planning row"
+- ❌ "see ### Wave D"
+- ❌ "update the ## Phase 6 section"
+
+---
+
+### 11.20 Agent Invents Behavior Instead of Copying the Established Pattern
+
+**Symptom:** Agent's file is syntactically correct and in scope but uses a different implementation shape than sibling files — e.g. `run()` logs silently instead of raising `NotImplementedError`, or adds a `main()` logging setup that siblings don't have.
+
+**Cause:** The task said "create a stub" but didn't say "copy the exact structure of this existing file." The model inferred a reasonable but divergent pattern.
+
+**Fix on dev** — orchestrator rewrites the divergent file to match the canonical pattern before merging.
+
+**Prevention — always include a copy instruction in stub tasks:**
+
+```
+"Before writing anything, read worker/workers/vuln_scanner.py in full.
+Your file must follow the exact same structure:
+  - SERVICE_NAME constant at the top
+  - run() method that raises NotImplementedError with a descriptive message
+  - A docstring explaining planned functionality
+  - No other methods, no logging setup, no FastAPI hooks
+Do not invent behavior — copy the shape exactly, change only the names and docstring."
+```
+
+---
+
+### 11.21 Agent Catalog Doc Becomes Stale Due to Parallel Agent Work
+
+**Symptom:** An agent writes a README or catalog doc listing the current state of a directory, but by merge time other parallel agents have added new files the doc doesn't mention.
+
+**Cause:** The doc was written against `dev` at task start. Parallel agents added new files to dev simultaneously — the doc was accurate when written but stale at review time.
+
+**Fix** — orchestrator updates the doc after all parallel merges complete:
+
+```bash
+git checkout dev
+# Edit catalog doc to reflect the final merged state
+git add path/to/catalog/doc
+git commit -m "docs: update catalog after parallel merge"
+git push origin dev
+```
+
+**Prevention — sequence catalog docs after the files they document:**
+
+```
+⚠️ SEQUENCED DISPATCH REQUIRED
+
+Round 1 → agent-04, agent-05, agent-06, agent-07 (create stub files in parallel)
+Round 2 → agent-08 (write README after Round 1 stubs land on dev)
+```
+
+Alternatively, assign the README update to the orchestrator as a post-merge hygiene step rather than to an agent.
+
+---
 
 ```
 Arguments: TASK, FILES, BRANCH
@@ -1553,6 +1675,39 @@ On success:
 
 ---
 
+### 11.23 Agent Completes Work Locally But Push Never Reaches GitHub
+
+**Symptom:** Orchestrator sees an empty branch tip (no commits ahead of dev) but the agent log shows TASK COMPLETE and a successful commit. The work exists on the agent machine but not on GitHub.
+
+**Cause:** The SSH session between N8N and the agent closed before the `git push` completed — either a network hiccup, the task took longer than expected, or the connection dropped during the push. N8N marked the job complete because the session ended without an error code.
+
+**Immediate fix:**
+```bash
+ssh -i ~/.ssh/n8n_agents AGENT_USER@AGENT_IP "
+  cd ~/REPO_NAME
+  git log origin/dev..HEAD --oneline  # confirm work exists locally
+  git push --force-with-lease origin AGENT_BRANCH
+"
+```
+
+**Permanent fix — three layers now in run-agent-task.sh:**
+
+1. **Push retry with SHA verification** — after every push, fetches the remote and compares `git rev-parse HEAD` vs `git rev-parse origin/BRANCH`. If they don't match, retries up to 3 times with a 5-second delay between attempts.
+2. **Discord alert on failure** — if all 3 push attempts fail verification, posts `⛔ PUSH FAILED` to `#project-blocked` with `@here` and exits with code 1.
+3. **N8N Retry On Fail** — enable this toggle on each SSH node (Settings tab → Retry On Fail → 2 retries). If the SSH session errors, N8N retries the entire job automatically.
+
+**N8N workflow timeout** — set to 30 minutes in Workflow Settings (Timeout Workflow → 0 hours, 30 minutes). This is the ceiling for the entire workflow run.
+
+With all four layers active:
+```
+Layer 1: Script retries push 3x with SHA verification
+Layer 2: Discord ⛔ alert if all 3 fail
+Layer 3: N8N Retry On Fail — retries entire SSH session up to 2x
+Layer 4: Workflow timeout — 30 minutes before N8N gives up
+```
+
+---
+
 ## Changelog
 
 | Date | Change |
@@ -1575,7 +1730,10 @@ On success:
 | May 2026 | Added troubleshooting 9.13 (scope creep), 9.14 (force-push policy), 9.15 (git attribution) |
 | May 2026 | Added Part 7 — Sample Cursor Rules Files (git-rules, agent-network, dispatch-agents, orchestration) |
 | May 2026 | Added pre-push scope violation check to run-agent-task.sh (blocks push if undeclared files in diff) |
-| May 2026 | Added troubleshooting 11.17 (scope violation) and 11.18 (non-ASCII commit subjects) |
+| May 2026 | First fully clean 8-agent dispatch — all branches showed exactly 1 file diff vs dev, zero scope violations |
+| May 2026 | Added push retry with SHA verification to run-agent-task.sh (3 attempts, Discord alert on failure) |
+| May 2026 | Added troubleshooting 11.23 — agent completes locally but push never reaches GitHub |
+| May 2026 | Added troubleshooting 11.21 (catalog doc stale due to parallel agent work — sequence solution) |
 | May 2026 | Added commit subject style rules to git-rules.mdc Rule 6 and dispatch-agents.mdc slice block |
 | May 2026 | Added squash-before-push guidance and Rule 12 (one clean commit per slice) |
 | May 2026 | Added troubleshooting 11.16 (empty push — slice already on dev) |
