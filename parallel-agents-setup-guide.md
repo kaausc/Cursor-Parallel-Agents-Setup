@@ -1732,6 +1732,50 @@ Layer 3: N8N Retry On Fail — retries entire SSH session up to 2x
 Layer 4: Workflow timeout — 30 minutes before N8N gives up
 ```
 
+### 11.25 Tests Fail After Merge — Contract Gap Between Parallel Agents
+
+**Symptom:** All agents pass scope review and merge cleanly, but pytest fails after the merge with errors like "unexpected keyword argument" or "token expanded blank" — tests call a function with arguments the implementation doesn't accept.
+
+**Cause:** Two agents working in parallel had a contract mismatch — one agent (coder) implemented a function with a specific signature, while another agent (tester) wrote tests assuming a different or extended signature. Both were correct for their own slice in isolation, but they diverged at the boundary.
+
+**This is not a scope violation** — both agents stayed in their assigned files. It is a task coordination gap.
+
+**Fix on dev** — orchestrator patches the mismatch directly:
+```bash
+git checkout dev
+# Edit the function signature to reconcile both agents' assumptions
+git add path/to/function_file.py
+git commit -m "fix: reconcile function signature after parallel agent merge"
+git push origin dev
+```
+
+**Prevention — include the function signature in both task descriptions:**
+
+When one agent writes a function and another writes tests for it, both task strings must include the exact agreed signature:
+
+```
+# In sc-ca-02's task (implementation):
+"Implement expand_canned_body(body, ticket=None, customer=None, client=None)
+with optional keyword args. Unknown placeholders expand to empty string."
+
+# In sc-ca-03's task (tests):
+"Write tests for expand_canned_body(body, ticket=None, customer=None, client=None).
+The function signature is: expand_canned_body(body, ticket=None, customer=None, client=None)"
+```
+
+**Alternatively — sequence the test agent after the implementation agent:**
+
+```
+⚠️ SEQUENCED DISPATCH REQUIRED
+
+Round 1 → sc-ca-02 (implement the function)
+Round 2 → sc-ca-03 (write tests — after sc-ca-02 posts ✅ and function signature is confirmed)
+```
+
+This guarantees the tester sees the actual shipped signature before writing assertions.
+
+---
+
 ### 11.24 Scope Check Shows Hundreds of Files — Branch Looks Polluted
 
 **Symptom:** Running `git diff --name-only dev..origin/agent-BRANCH` shows 50+ files across the whole codebase even though the agent only touched one file.
@@ -1782,7 +1826,8 @@ This should show exactly one file matching `files_N`. The three-dot syntax finds
 | May 2026 | Added .venv/ and __pycache__/ to repo root .gitignore on dev |
 | May 2026 | Added push retry with SHA verification (3 attempts, Discord alert on failure) |
 | May 2026 | Added TASK argument sanitization — strips # to prevent markdown headings breaking SSH args |
-| May 2026 | First zero-intervention dispatch — all 8 agents clean, one file each, no .venv, no git add . noise, merges completed with no conflicts |
+| May 2026 | Second consecutive zero-intervention dispatch — 8 agents, 1 commit each, all approved, no scope violations |
+| May 2026 | Added troubleshooting 11.25 — test failure after merge due to contract gap between parallel agents |
 | May 2026 | Updated orchestration.mdc review protocol to use origin/dev...origin/BRANCH (three dots) |
 
 ---

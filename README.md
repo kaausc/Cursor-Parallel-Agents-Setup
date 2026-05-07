@@ -97,12 +97,14 @@ N8N collects all results → posts summary to #orchestration channel
 - **Automatic scope enforcement** — agents physically cannot commit files outside their assigned slice
 - **Pre-flight reset** — every task starts from a clean `origin/dev` baseline, eliminating stale history
 - **Slice discipline** — prompt injection + post-task file scope check on every coding task
+- **Push reliability** — 3-attempt retry with SHA verification, Discord alert on failure
 - **Discord integration** — live `🔄 starting` / `✅ complete` / `⛔ blocked` notifications per agent
 - **Git attribution** — every commit clearly identified by agent name and email
 - **Conflict prevention** — `.gitattributes` `merge=ours` strategy on cursor rules and docs
 - **Self-healing DNS** — persistent `systemd-resolved` config survives reboots
 - **Passwordless sudo** — N8N can run privileged commands without interactive prompts
 - **Force-push safe** — pre-task resets use `--force-with-lease`, never `--force`
+- **Proven in production** — consistently achieving zero-intervention dispatches with 8 parallel agents
 
 ---
 
