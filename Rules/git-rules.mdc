@@ -108,11 +108,27 @@ git diff --staged
 # 3. Commit with a descriptive message
 git commit -m "feat: describe what was completed"
 
-# 4. Push to your branch
-git push origin <your-branch>
+# 4. Verify diff matches ONLY your assigned files — HARD STOP if not
+git diff --name-only origin/dev HEAD
+# Must show ONLY files_N paths
+# If ANY other file appears — DO NOT push — report scope violation to orchestrator
 
-# 5. Report completion to orchestrator
+# 5. Check for empty commits vs dev
+git log origin/dev..HEAD --oneline
+# If 0 lines → nothing new → skip push and inform orchestrator
+
+# 6. Push only if scope is clean and commits are new
+git push --force-with-lease origin <your-branch>
+
+# 7. Report completion to orchestrator
 ```
+
+### Commit Subject Style
+
+- Use only ASCII characters in the subject line — no `§`, `→`, or other symbols
+- Keep subjects under 72 characters
+- Format: `<type>: <short description>` (feat / fix / docs / test / chore / refactor)
+- Body may contain Unicode if needed for clarity
 
 ---
 
@@ -199,6 +215,33 @@ Remove local repo overrides if present:
 git config --local --unset user.name 2>/dev/null || true
 git config --local --unset user.email 2>/dev/null || true
 ```
+
+---
+
+## Rule 12 — One Clean Commit Per Slice
+
+Each dispatch slice should result in exactly **one commit** on the agent branch
+containing only the declared `files_N` paths. Before pushing:
+
+```bash
+# 1. Check what you have vs dev
+git log origin/dev..HEAD --oneline
+# If this shows commits already on dev → squash or drop them:
+git rebase -i origin/dev
+# Mark already-merged commits as 'drop'
+
+# 2. Verify final diff matches only your assigned files
+git diff --name-only origin/dev HEAD
+# Must match files_N exactly
+
+# 3. Only push if there is new content
+# 0 lines = nothing new = do not push
+git log origin/dev..HEAD --oneline | wc -l
+```
+
+The `run-agent-task.sh` script enforces this automatically — it checks for
+new commits vs dev before pushing and skips the push entirely if there is
+nothing new, posting an informational Discord message instead.
 
 ---
 

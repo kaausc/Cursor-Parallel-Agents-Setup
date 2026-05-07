@@ -160,6 +160,12 @@ Each task MUST be self-contained and include:
 4. **How** — patterns to follow (e.g. "follow existing patterns in server/routers/")
 5. **Done when** — clear definition of done
 6. **Dependencies** — if dependent on another agent finishing first, say so explicitly
+7. **Pattern reference** — if creating a file that must match siblings, name the exact reference file and say "copy the structure exactly, change only names and docstrings"
+
+**Task string formatting rules:**
+- Do NOT use markdown headings (`#`, `##`, `###`) inside task strings — they break shell argument parsing when passed through SSH
+- Reference doc sections by name in plain prose: "the Wave D section" not "### Wave D"
+- Do not use code fences or bullet lists inside the task string itself
 
 **Bad:**
 ```
@@ -190,7 +196,8 @@ SLICE DISCIPLINE — STRICTLY ENFORCED:
 - Do NOT merge, cherry-pick, or carry over any unrelated local work
 - If a change seems needed outside your assigned files, note it in your report — do NOT make it
 - Commit ONLY the changes to your assigned files
-- Commit message format: '<type>: <description>'
+- Commit message format: '<type>: <description>' — ASCII only, no § or → symbols, under 72 chars
+- Before pushing: git diff --name-only origin/dev HEAD must show ONLY your assigned files
 ```
 
 ### sc-karl review checklist before merging to dev
